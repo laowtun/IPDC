@@ -337,19 +337,52 @@ const HTML = `<!DOCTYPE html>
       .globeImageUrl('//unpkg.com/three-globe/example/img/earth-night.jpg')
       .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
       .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
-      .pointAltitude(0.01)
-      .pointRadius(0.25)
-      .pointColor(() => '#3b82f6')
-      .pointLabel(({ name }) => '<div style="background:rgba(0,0,0,0.8);padding:6px 12px;border-radius:8px;color:#fff;font-size:13px;">' + name + '</div>')
+      // Atmosphere glow
+      .showAtmosphere(true)
+      .atmosphereColor('#3b82f6')
+      .atmosphereAltitude(0.25)
+      // Point (big glowing marker)
+      .pointAltitude(0.06)
+      .pointRadius(0.6)
+      .pointColor(() => '#00ff88')
+      .pointLabel(({ name }) => '')
       .pointsData([])
+      // HTML labels
+      .htmlElementsData([])
+      .htmlLat('lat')
+      .htmlLng('lng')
+      .htmlElement(d => {
+        const el = document.createElement('div');
+        el.innerHTML = '<div style="text-align:center;pointer-events:none;">'
+          + '<div style="background:linear-gradient(135deg,rgba(59,130,246,0.95),rgba(139,92,246,0.95));'
+          + 'padding:8px 16px;border-radius:10px;color:#fff;font-size:13px;font-weight:600;'
+          + 'white-space:nowrap;box-shadow:0 0 20px rgba(59,130,246,0.5),0 0 40px rgba(59,130,246,0.2);'
+          + 'border:1px solid rgba(255,255,255,0.2);backdrop-filter:blur(4px);">'
+          + '<div style="font-size:15px;margin-bottom:2px;">📍 ' + (d.name || '') + '</div>'
+          + '<div style="font-size:11px;opacity:0.8;font-family:monospace;">' + (d.ip || '') + '</div>'
+          + '</div>'
+          + '<div style="width:2px;height:20px;background:linear-gradient(to bottom,rgba(0,255,136,0.8),transparent);margin:0 auto;"></div>'
+          + '</div>';
+        el.style.transform = 'translate(-50%, -100%)';
+        return el;
+      })
+      // Rings (pulsing halo)
+      .ringsData([])
+      .ringLat('lat')
+      .ringLng('lng')
+      .ringColor(() => t => `rgba(0,255,136,${(1-t)*0.6})`)
+      .ringMaxRadius(4)
+      .ringPropagationSpeed(2)
+      .ringRepeatPeriod(1000)
       .width(container.clientWidth)
       .height(container.clientHeight);
 
-    globe.controls().autoRotate = true;
-    globe.controls().autoRotateSpeed = 0.5;
+    globe.controls().autoRotate = false;
+    globe.controls().autoRotateSpeed = 0.3;
     globe.controls().enableZoom = true;
+    globe.controls().minDistance = 100;
+    globe.controls().maxDistance = 500;
 
-    // Handle resize
     window.addEventListener('resize', () => {
       if (globe && container.clientWidth > 0) {
         globe.width(container.clientWidth).height(container.clientHeight);
@@ -357,17 +390,24 @@ const HTML = `<!DOCTYPE html>
     });
   }
 
-  function showGlobePoint(lat, lng, name) {
+  function showGlobePoint(lat, lng, name, ip) {
     if (!globe) initGlobe();
     if (!globe) return;
     currentLat = parseFloat(lat) || 0;
     currentLng = parseFloat(lng) || 0;
 
-    // Set point data
-    globe.pointsData([{ lat: currentLat, lng: currentLng, name: name || '' }]);
+    const pt = { lat: currentLat, lng: currentLng, name: name || '', ip: ip || '' };
 
-    // Fly to point
-    globe.pointOfView({ lat: currentLat, lng: currentLng, altitude: 1.5 }, 1000);
+    // Set point, label, and ring data
+    globe.pointsData([pt]);
+    globe.htmlElementsData([pt]);
+    globe.ringsData([pt]);
+
+    // Fly in close
+    globe.pointOfView({ lat: currentLat, lng: currentLng, altitude: 0.9 }, 1500);
+
+    // Stop auto-rotate so user can see the location
+    globe.controls().autoRotate = false;
   }
 
   function showResults(data) {
@@ -457,7 +497,7 @@ const HTML = `<!DOCTYPE html>
 
       // Show on globe
       if (geo.latitude && geo.longitude) {
-        showGlobePoint(geo.latitude, geo.longitude, geo.city + ', ' + geo.country);
+        showGlobePoint(geo.latitude, geo.longitude, (geo.city || '') + ', ' + (geo.country || ''), geo.ip);
       }
     }
 
@@ -467,7 +507,7 @@ const HTML = `<!DOCTYPE html>
     setTimeout(() => {
       initGlobe();
       if (geo && geo.latitude && geo.longitude) {
-        showGlobePoint(geo.latitude, geo.longitude, geo.city + ', ' + geo.country);
+        showGlobePoint(geo.latitude, geo.longitude, (geo.city || '') + ', ' + (geo.country || ''), geo.ip);
       }
     }, 100);
   }
