@@ -58,29 +58,51 @@ export default {
         const result: any = { target, type: isDomain ? 'domain' : (isIPv6 ? 'ipv6' : 'ipv4') };
 
         if (isDomain) {
+          // Domain → resolve both A + AAAA, lookup BOTH
           const [aRecords, aaaaRecords] = await Promise.all([
             resolveDNS(target, 'A'),
             resolveDNS(target, 'AAAA'),
           ]);
           result.dns = { a: aRecords, aaaa: aaaaRecords };
-          const lookupIp = aRecords[0] || aaaaRecords[0];
-          if (lookupIp) {
-            const geo = await lookupIP(lookupIp);
-            if (geo) {
-              result.geolocation = geo;
-              result.resolved_ip = lookupIp;
-            }
+
+          // Lookup both IPv4 and IPv6 in parallel
+          const ipv4Ip = aRecords[0];
+          const ipv6Ip = aaaaRecords[0];
+          const [geo4, geo6] = await Promise.all([
+            ipv4Ip ? lookupIP(ipv4Ip) : Promise.resolve(null),
+            ipv6Ip ? lookupIP(ipv6Ip) : Promise.resolve(null),
+          ]);
+
+          if (geo4 || geo6) {
+            result.geolocation = {};
+            if (geo4) { result.geolocation.ipv4 = geo4; result.resolved_ip = ipv4Ip; }
+            if (geo6) { result.geolocation.ipv6 = geo6; if (!result.resolved_ip) result.resolved_ip = ipv6Ip; }
+            result.has_ipv4 = !!geo4;
+            result.has_ipv6 = !!geo6;
           } else {
             result.error = 'No DNS records found';
           }
         } else {
-          const [geo, ptrRecords] = await Promise.all([
-            lookupIP(target),
-            resolveDNS(`${target.split('.').reverse().join('.')}.in-addr.arpa`, 'PTR')
-              .catch(() => resolveDNS(target, 'PTR')),
-          ]);
-          if (geo) result.geolocation = geo;
-          result.reverse_dns = ptrRecords;
+          // Direct IP → lookup, also try reverse DNS
+          const geo = await lookupIP(target);
+          if (geo) {
+            result.geolocation = {};
+            result.geolocation[result.type] = geo;
+            result.has_ipv4 = result.type === 'ipv4';
+            result.has_ipv6 = result.type === 'ipv6';
+          }
+          // Reverse DNS
+          let ptrName = '';
+          if (isIPv4) {
+            ptrName = target.split('.').reverse().join('.') + '.in-addr.arpa';
+          } else if (isIPv6) {
+            // Simple IPv6 ptr
+            ptrName = target.replace(/:/g, '').split('').reverse().join('.') + '.ip6.arpa';
+          }
+          if (ptrName) {
+            const ptr = await resolveDNS(ptrName, 'PTR').catch(() => []);
+            if (ptr.length) result.reverse_dns = ptr;
+          }
         }
 
         return Response.json(result, { headers: corsHeaders });
@@ -410,6 +432,39 @@ const HTML = `<!DOCTYPE html>
     globe.controls().autoRotate = false;
   }
 
+  // Render a single geolocation card
+  function renderGeoCard(geo, version) {
+    if (!geo) return '';
+    let h = '';
+    h += '<div class="card" style="flex:1;min-width:300px;">';
+    h += '<div class="card-title"><span class="dot"></span>' + badge(version) + ' 地理信息</div>';
+    h += '<div class="info-grid">';
+    h += info('IP', geo.ip, true);
+    h += info('国家', (geo.country || '') + (geo.country_code ? ' (' + geo.country_code + ')' : ''));
+    h += info('地区', geo.region);
+    h += info('城市', geo.city);
+    h += info('邮编', geo.postal);
+    h += info('时区', geo.timezone);
+    h += info('纬度', geo.latitude, true);
+    h += info('经度', geo.longitude, true);
+    h += '</div></div>';
+
+    h += '<div class="card" style="flex:1;min-width:300px;">';
+    h += '<div class="card-title">' + badge(version) + ' 网络信息</div>';
+    h += '<div class="info-grid">';
+    h += info('ISP', geo.isp);
+    h += info('组织', geo.org);
+    h += info('AS 信息', geo.as_info, true);
+    h += info('反向 DNS', geo.reverse_dns);
+    h += '</div>';
+    h += '<div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap;">';
+    h += '<div>' + tag(geo.is_hosting, '托管/数据中心', '非托管') + '</div>';
+    h += '<div>' + tag(geo.is_proxy, '代理/VPN', '非代理') + '</div>';
+    h += '<div>' + tag(geo.is_mobile, '移动网络', '非移动') + '</div>';
+    h += '</div></div>';
+    return h;
+  }
+
   function showResults(data) {
     const el = $('results');
     if (data.error) {
@@ -417,9 +472,11 @@ const HTML = `<!DOCTYPE html>
       return;
     }
 
-    const geo = data.geolocation;
-    const type = data.type;
-    const ip = geo ? geo.ip : data.target;
+    const geo = data.geolocation; // { ipv4: {...}, ipv6: {...} }
+    const geo4 = geo?.ipv4;
+    const geo6 = geo?.ipv6;
+    const has4 = !!geo4;
+    const has6 = !!geo6;
 
     let html = '';
 
@@ -428,14 +485,14 @@ const HTML = `<!DOCTYPE html>
     html += '<div id="globe-container"></div>';
     html += '</div>';
 
-    // IP card
+    // IP summary card
     html += '<div class="card">';
-    html += '<div class="card-title"><span class="dot"></span>查询结果</div>';
-    html += '<div class="ip-display">' + ip + badge(type) + '</div>';
-    if (data.resolved_ip && data.resolved_ip !== ip) {
-      html += '<div style="color:var(--muted);margin-top:8px;font-size:0.9em;">解析自 ' + data.target + ' → ' + data.resolved_ip + '</div>';
-    }
-    html += '</div>';
+    html += '<div class="card-title"><span class="dot"></span>查询结果 — ' + data.target + '</div>';
+    html += '<div style="display:flex;gap:16px;flex-wrap:wrap;">';
+    if (has4) html += '<div class="ip-display" style="font-size:1.3em;">' + geo4.ip + badge('ipv4') + '</div>';
+    if (has6) html += '<div class="ip-display" style="font-size:1.3em;color:var(--accent2);">' + geo6.ip + badge('ipv6') + '</div>';
+    if (!has4 && !has6) html += '<div style="color:var(--muted);">未找到 IP 记录</div>';
+    html += '</div></div>';
 
     // DNS records
     if (data.dns) {
@@ -463,42 +520,12 @@ const HTML = `<!DOCTYPE html>
       html += '</div></div>';
     }
 
-    // Geolocation card
-    if (geo) {
-      html += '<div class="card">';
-      html += '<div class="card-title">地理信息</div>';
-      html += '<div class="info-grid">';
-      html += info('国家', (geo.country || '') + (geo.country_code ? ' (' + geo.country_code + ')' : ''));
-      html += info('地区', geo.region);
-      html += info('城市', geo.city);
-      html += info('邮编', geo.postal);
-      html += info('时区', geo.timezone);
-      html += info('纬度', geo.latitude, true);
-      html += info('经度', geo.longitude, true);
-      html += '</div></div>';
-
-      // Network card
-      html += '<div class="card">';
-      html += '<div class="card-title">网络信息</div>';
-      html += '<div class="info-grid">';
-      html += info('ISP', geo.isp);
-      html += info('组织', geo.org);
-      html += info('AS 信息', geo.as_info, true);
-      html += info('AS 名称', geo.as_name);
-      html += info('反向 DNS', geo.reverse_dns);
+    // IPv4 + IPv6 side by side
+    if (has4 || has6) {
+      html += '<div style="display:flex;gap:20px;flex-wrap:wrap;">';
+      if (has4) html += renderGeoCard(geo4, 'ipv4');
+      if (has6) html += renderGeoCard(geo6, 'ipv6');
       html += '</div>';
-
-      html += '<div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap;">';
-      html += '<div>' + tag(geo.is_hosting, '托管/数据中心', '非托管') + '</div>';
-      html += '<div>' + tag(geo.is_proxy, '代理/VPN', '非代理') + '</div>';
-      html += '<div>' + tag(geo.is_mobile, '移动网络', '非移动') + '</div>';
-      html += '</div>';
-      html += '</div>';
-
-      // Show on globe
-      if (geo.latitude && geo.longitude) {
-        showGlobePoint(geo.latitude, geo.longitude, (geo.city || '') + ', ' + (geo.country || ''), geo.ip);
-      }
     }
 
     el.innerHTML = html;
@@ -506,8 +533,10 @@ const HTML = `<!DOCTYPE html>
     // Re-init globe after DOM update
     setTimeout(() => {
       initGlobe();
-      if (geo && geo.latitude && geo.longitude) {
-        showGlobePoint(geo.latitude, geo.longitude, (geo.city || '') + ', ' + (geo.country || ''), geo.ip);
+      if (has4 && geo4.latitude && geo4.longitude) {
+        showGlobePoint(geo4.latitude, geo4.longitude, (geo4.city || '') + ', ' + (geo4.country || ''), geo4.ip);
+      } else if (has6 && geo6.latitude && geo6.longitude) {
+        showGlobePoint(geo6.latitude, geo6.longitude, (geo6.city || '') + ', ' + (geo6.country || ''), geo6.ip);
       }
     }, 100);
   }
