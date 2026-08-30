@@ -392,7 +392,7 @@ const HTML = `<!DOCTYPE html>
       .ringsData([])
       .ringLat('lat')
       .ringLng('lng')
-      .ringColor(() => function(t: number) { return 'rgba(0,255,136,' + ((1-t)*0.6) + ')'; })
+      .ringColor(t => 'rgba(0,255,136,' + ((1-t)*0.6) + ')')
       .ringMaxRadius(4)
       .ringPropagationSpeed(2)
       .ringRepeatPeriod(1000)
