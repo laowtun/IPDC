@@ -28,5 +28,5 @@ jobs:
       - name: Smoke test
         run: |
           sleep 5
-          curl -sf https://ipdc.oqn.workers.dev/ | grep -q 'IP Lookup Tool'
+          curl -sf https://ip-lookup.oqn.workers.dev/ | grep -q 'IPDC'
           echo "Smoke test passed!"

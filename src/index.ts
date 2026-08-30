@@ -1,7 +1,7 @@
 interface Env {}
 
-// IP geolocation API (free, no key, supports IPv4+IPv6)
-const IP_API = 'https://ip-api.com/json';
+// IP geolocation API (free, no key, supports IPv4+IPv6, HTTPS)
+const IP_API = 'https://ipwho.is';
 
 // DNS-over-HTTPS resolver (Cloudflare 1.1.1.1)
 const DOH_URL = 'https://1.1.1.1/dns-query';
@@ -115,29 +115,29 @@ async function resolveDNS(name: string, type: string): Promise<string[]> {
 
 async function lookupIP(ip: string): Promise<any | null> {
   try {
-    const res = await fetch(`${IP_API}/${ip}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,asname,reverse,mobile,proxy,hosting,query`, {
+    const res = await fetch(`${IP_API}/${ip}`, {
       signal: AbortSignal.timeout(5000),
     });
     const data: any = await res.json();
-    if (data.status === 'fail') return null;
+    if (!data.success) return null;
     return {
-      ip: data.query,
+      ip: data.ip,
       country: data.country,
-      country_code: data.countryCode,
-      region: data.regionName,
+      country_code: data.country_code,
+      region: data.region,
       city: data.city,
-      postal: data.zip,
-      latitude: data.lat,
-      longitude: data.lon,
-      timezone: data.timezone,
-      isp: data.isp,
-      org: data.org,
-      as_info: data.as,
-      as_name: data.asname,
-      reverse_dns: data.reverse,
-      is_mobile: data.mobile,
-      is_proxy: data.proxy,
-      is_hosting: data.hosting,
+      postal: data.postal,
+      latitude: data.latitude,
+      longitude: data.longitude,
+      timezone: data.timezone?.id || '',
+      isp: data.connection?.isp || '',
+      org: data.connection?.org || '',
+      as_info: 'AS' + (data.connection?.asn || ''),
+      as_name: data.connection?.org || '',
+      reverse_dns: data.connection?.domain || '',
+      is_mobile: false,
+      is_proxy: false,
+      is_hosting: data.connection?.type === 'hosting' || false,
     };
   } catch {
     return null;
