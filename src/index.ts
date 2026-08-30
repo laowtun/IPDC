@@ -50,8 +50,7 @@ export default {
             result.geolocation = {};
             const seen = new Set();
             for (let i = 0; i < allIps.length; i++) {
-              const ip = allIps[i];
-              const geo = geos[i];
+              const ip = allIps[i]; const geo = geos[i];
               if (!geo || seen.has(ip)) continue;
               seen.add(ip);
               const ver = ip.includes(':') ? 'ipv6' : 'ipv4';
@@ -109,7 +108,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .hdr h1{font-size:2em;margin-bottom:6px;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
 .hdr p{color:var(--muted);font-size:.95em;}
 .theme-btn{position:absolute;top:0;right:0;width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:var(--card);cursor:pointer;font-size:1.1em;display:flex;align-items:center;justify-content:center;transition:all .3s;}
-.theme-btn:hover{transform:scale(1.1);box-shadow:0 2px 8px rgba(0,0,0,.2);}
+.theme-btn:hover{transform:scale(1.1);}
 .search{display:flex;gap:10px;margin-bottom:24px;}
 .search input{flex:1;padding:12px 16px;border-radius:10px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:1em;outline:none;transition:all .3s;}
 .search input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,130,246,.15);}
@@ -159,90 +158,31 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <script src="https://unpkg.com/globe.gl@2.35.1/dist/globe.gl.min.js"></script>
 <script>
 var globe=null;
-
-// ─── Theme ───
 (function(){var t=localStorage.getItem('theme')||'dark';document.documentElement.setAttribute('data-theme',t);var b=document.getElementById('themeBtn');if(b)b.textContent=t==='dark'?'🌙':'☀️';})();
 function toggleTheme(){var cur=document.documentElement.getAttribute('data-theme');var next=cur==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',next);localStorage.setItem('theme',next);document.getElementById('themeBtn').textContent=next==='dark'?'🌙':'☀️';}
-
 function $(id){return document.getElementById(id);}
 function badge(t){return '<span class="badge '+(t==='ipv4'?'b4':'b6')+'">'+t.toUpperCase()+'</span>';}
 function item(l,v){return '<div class="item"><div class="item-l">'+l+'</div><div class="item-v">'+(v||'\\u2014')+'</div></div>';}
 function itemM(l,v){return '<div class="item"><div class="item-l">'+l+'</div><div class="item-v mono">'+(v||'\\u2014')+'</div></div>';}
-
-function initGlobe(){
-  var el=$('globe');if(!el)return;if(globe)el.innerHTML='';
-  globe=Globe()(el)
-    .globeImageUrl('//unpkg.com/three-globe/example/img/earth-night.jpg')
-    .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
-    .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
-    .showAtmosphere(true).atmosphereColor('#3b82f6').atmosphereAltitude(0.25)
-    .pointAltitude(0.06).pointRadius(0.5).pointColor(function(){return '#00ff88';})
-    .pointsData([])
-    .htmlElementsData([]).htmlLat('lat').htmlLng('lng')
-    .htmlElement(function(d){
-      var el=document.createElement('div');
-      el.style.cssText='transform:translate(-50%,-100%);pointer-events:none;';
-      el.innerHTML='<div style="background:linear-gradient(135deg,rgba(59,130,246,.9),rgba(139,92,246,.9));padding:6px 12px;border-radius:8px;color:#fff;font-size:11px;font-weight:600;white-space:nowrap;box-shadow:0 0 12px rgba(59,130,246,.4);">'+(d.label||'')+'<div style="font-size:9px;opacity:.8;font-family:monospace;">'+(d.ip||'')+'</div></div>';
-      return el;
-    })
-    .ringsData([]).ringLat('lat').ringLng('lng')
-    .ringColor(function(t){return 'rgba(0,255,136,'+((1-t)*0.6)+')';})
-    .ringMaxRadius(3).ringPropagationSpeed(2).ringRepeatPeriod(1000)
-    .width(el.clientWidth).height(el.clientHeight);
-  globe.controls().autoRotate=false;globe.controls().enableZoom=true;
-}
-
-function showGlobe(lat,lng,label,ip){
-  if(!globe)return;
-  var pt={lat:parseFloat(lat)||0,lng:parseFloat(lng)||0,label:label||'',ip:ip||''};
-  globe.pointsData([pt]);globe.htmlElementsData([pt]);globe.ringsData([pt]);
-  globe.pointOfView({lat:pt.lat,lng:pt.lng,altitude:0.9},1500);
-}
-
-function showResults(d){
-  var el=$('results');
-  if(!el)return;
-  if(d.error){el.innerHTML='<div class="card err">'+d.error+'</div>';return;}
-  var g=d.geolocation||{};var g4=g.ipv4||null;var g6=g.ipv6||null;
-  var h='<div class="globe" id="globe"></div>';
-  h+='<div class="card"><div class="card-t"><span class="dot"></span>'+d.target+'</div><div style="display:flex;gap:12px;flex-wrap:wrap;">';
-  if(g4)h+='<div class="ip">'+(g4.ip||g4.ip_address||'')+badge('ipv4')+'</div>';
-  if(g6)h+='<div class="ip" style="color:var(--accent2)">'+(g6.ip||g6.ip_address||'')+badge('ipv6')+'</div>';
-  if(!g4&&!g6)h+='<div style="color:var(--muted);">\\u2014</div>';
-  h+='</div></div>';
-  if(d.dns){
-    h+='<div class="card"><div class="card-t"><span class="dot"></span>DNS 记录</div><div class="dns">';
-    if(d.dns.a&&d.dns.a.length)h+='<div><span class="dns-t">A</span>'+d.dns.a.join(', ')+'</div>';
-    if(d.dns.aaaa&&d.dns.aaaa.length)h+='<div><span class="dns-t">AAAA</span>'+d.dns.aaaa.join(', ')+'</div>';
-    if((!d.dns.a||!d.dns.a.length)&&(!d.dns.aaaa||!d.dns.aaaa.length))h+='<div style="color:var(--muted);">\\u65e0\\u8bb0\\u5f55</div>';
-    h+='</div></div>';
-  }
-  if(g4||g6){h+='<div class="row">';if(g4)h+=geoCard(g4,'ipv4');if(g6)h+=geoCard(g6,'ipv6');h+='</div>';}
-  el.innerHTML=h;
-  setTimeout(function(){initGlobe();var gp=g4||g6;if(gp&&gp.latitude)showGlobe(gp.latitude,gp.longitude,(gp.city||'')+', '+(gp.country||''),gp.ip||'');},200);
-}
-
-function geoCard(geo,ver){
-  var h='<div class="card"><div class="card-t"><span class="dot"></span>'+ver.toUpperCase()+'</div><div class="grid">';
-  h+=itemM('IP',geo.ip||geo.ip_address);
-  h+=item('Country',geo.country);h+=item('Region',geo.region);h+=item('City',geo.city);
-  h+=item('Colo',geo.colo);h+=item('AS','AS'+geo.asn);
-  h+=itemM('Lat',geo.latitude);h+=itemM('Lon',geo.longitude);
-  h+='</div></div>';return h;
-}
-
+function initGlobe(){var el=$('globe');if(!el)return;if(globe)el.innerHTML='';globe=Globe()(el).globeImageUrl('//unpkg.com/three-globe/example/img/earth-night.jpg').bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png').backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png').showAtmosphere(true).atmosphereColor('#3b82f6').atmosphereAltitude(0.25).pointAltitude(0.06).pointRadius(0.5).pointColor(function(){return '#00ff88';}).pointsData([]).htmlElementsData([]).htmlLat('lat').htmlLng('lng').htmlElement(function(d){var el=document.createElement('div');el.style.cssText='transform:translate(-50%,-100%);pointer-events:none;';el.innerHTML='<div style="background:linear-gradient(135deg,rgba(59,130,246,.9),rgba(139,92,246,.9));padding:6px 12px;border-radius:8px;color:#fff;font-size:11px;font-weight:600;white-space:nowrap;box-shadow:0 0 12px rgba(59,130,246,.4);">'+(d.label||'')+'<div style="font-size:9px;opacity:.8;font-family:monospace;">'+(d.ip||'')+'</div></div>';return el;}).ringsData([]).ringLat('lat').ringLng('lng').ringColor(function(t){return 'rgba(0,255,136,'+((1-t)*0.6)+')';}).ringMaxRadius(3).ringPropagationSpeed(2).ringRepeatPeriod(1000).width(el.clientWidth).height(el.clientHeight);globe.controls().autoRotate=false;globe.controls().enableZoom=true;}
+function showGlobe(lat,lng,label,ip){if(!globe)return;var pt={lat:parseFloat(lat)||0,lng:parseFloat(lng)||0,label:label||'',ip:ip||''};globe.pointsData([pt]);globe.htmlElementsData([pt]);globe.ringsData([pt]);globe.pointOfView({lat:pt.lat,lng:pt.lng,altitude:0.9},1500);}
+function showResults(d){var el=$('results');if(!el)return;if(d.error){el.innerHTML='<div class="card err">'+d.error+'</div>';return;}var g=d.geolocation||{};var g4=g.ipv4||null;var g6=g.ipv6||null;var h='<div class="globe" id="globe"></div>';h+='<div class="card"><div class="card-t"><span class="dot"></span>'+d.target+'</div><div style="display:flex;gap:12px;flex-wrap:wrap;">';if(g4)h+='<div class="ip">'+(g4.ip||g4.ip_address||'')+badge('ipv4')+'</div>';if(g6)h+='<div class="ip" style="color:var(--accent2)">'+(g6.ip||g6.ip_address||'')+badge('ipv6')+'</div>';if(!g4&&!g6)h+='<div style="color:var(--muted);">\\u2014</div>';h+='</div></div>';if(d.dns){h+='<div class="card"><div class="card-t"><span class="dot"></span>DNS 记录</div><div class="dns">';if(d.dns.a&&d.dns.a.length)h+='<div><span class="dns-t">A</span>'+d.dns.a.join(', ')+'</div>';if(d.dns.aaaa&&d.dns.aaaa.length)h+='<div><span class="dns-t">AAAA</span>'+d.dns.aaaa.join(', ')+'</div>';if((!d.dns.a||!d.dns.a.length)&&(!d.dns.aaaa||!d.dns.aaaa.length))h+='<div style="color:var(--muted);">\\u65e0\\u8bb0\\u5f55</div>';h+='</div></div>';}if(g4||g6){h+='<div class="row">';if(g4)h+=geoCard(g4,'ipv4');if(g6)h+=geoCard(g6,'ipv6');h+='</div>';}el.innerHTML=h;setTimeout(function(){initGlobe();var gp=g4||g6;if(gp&&gp.latitude)showGlobe(gp.latitude,gp.longitude,(gp.city||'')+', '+(gp.country||''),gp.ip||'');},200);}
+function geoCard(geo,ver){var h='<div class="card"><div class="card-t"><span class="dot"></span>'+ver.toUpperCase()+'</div><div class="grid">';h+=itemM('IP',geo.ip||geo.ip_address);h+=item('Country',geo.country);h+=item('Region',geo.region);h+=item('City',geo.city);h+=item('Colo',geo.colo);h+=item('AS','AS'+geo.asn);h+=itemM('Lat',geo.latitude);h+=itemM('Lon',geo.longitude);h+='</div></div>';return h;}
 function showLoading(m){var el=$('results');if(el)el.innerHTML='<div class="loading"><div class="spinner"></div>'+m+'</div>';}
 
-// ─── Visitor: dual-stack via radar endpoints ───
-async function fetchRadar(t){
-  try{var r=await fetch('/api/radar?ip='+t+'&_t='+Date.now());if(!r.ok)return null;return await r.json();}catch(e){return null;}
-}
+// ─── Visitor: use /api/visitor for org name, radar for dual-stack IPs ───
+async function fetchVisitor(){try{var r=await fetch('/api/visitor?_t='+Date.now());return await r.json();}catch(e){return null;}}
+async function fetchRadar(t){try{var r=await fetch('/api/radar?ip='+t+'&_t='+Date.now());if(!r.ok)return null;return await r.json();}catch(e){return null;}}
 
 async function loadVisitor(){
   showLoading('Detecting your IP...');
   try{
-    var ipv4=await fetchRadar('ipv4');
-    var ipv6=await fetchRadar('ipv6');
+    var vis=await fetchVisitor();
+    var radar4=await fetchRadar('ipv4');
+    var radar6=await fetchRadar('ipv6');
+    // Use radar for IP addresses, visitor for org name
+    var ipv4=radar4?{ip_address:radar4.ip_address,asn:radar4.asn,asOrganization:vis?vis.as_org:'',country:radar4.country,city:radar4.city,colo:radar4.colo}:null;
+    var ipv6=radar6?{ip_address:radar6.ip_address,asn:radar6.asn,asOrganization:vis?vis.as_org:'',country:radar6.country,city:radar6.city,colo:radar6.colo}:null;
     var primary=ipv4||ipv6;
     if(primary)$('q').value=primary.ip_address||'';
     var d={target:(primary?primary.ip_address:'unknown'),type:'dual',geolocation:{}};
@@ -274,7 +214,6 @@ function showMeta(v4,v6){
   $('metaBox').innerHTML=h;
 }
 
-// ─── Lookup ───
 async function doLookup(){
   var input=$('q').value.trim();if(!input)return;
   $('btn').disabled=true;showLoading('Querying '+input+' ...');
@@ -282,8 +221,10 @@ async function doLookup(){
     var r=await fetch('/api/lookup?target='+encodeURIComponent(input)+'&_t='+Date.now());
     var data=await r.json();
     showResults(data);
-    var ipv4=await fetchRadar('ipv4');
-    var ipv6=await fetchRadar('ipv6');
+    var vis=await fetchVisitor();
+    var radar4=await fetchRadar('ipv4');var radar6=await fetchRadar('ipv6');
+    var ipv4=radar4?{ip_address:radar4.ip_address,asn:radar4.asn,asOrganization:vis?vis.as_org:'',country:radar4.country,city:radar4.city,colo:radar4.colo}:null;
+    var ipv6=radar6?{ip_address:radar6.ip_address,asn:radar6.asn,asOrganization:vis?vis.as_org:'',country:radar6.country,city:radar6.city,colo:radar6.colo}:null;
     showMeta(ipv4,ipv6);
   }catch(e){
     var el=$('results');if(el)el.innerHTML='<div class="card err">'+e.message+'</div>';
