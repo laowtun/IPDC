@@ -25,6 +25,22 @@ export default {
       }, { headers: corsHeaders });
     }
 
+    // ─── API: radar (proxy IPv4/IPv6) ───
+    if (url.pathname === '/api/radar') {
+      const ipver = url.searchParams.get('ip') || '4';
+      const radarUrl = ipver === '6'
+        ? 'https://ipv6-check-perf.radar.cloudflare.com/'
+        : 'https://ipv4-check-perf.radar.cloudflare.com/';
+      try {
+        const res = await fetch(radarUrl, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) return Response.json({ error: 'radar returned ' + res.status }, { status: 502, headers: corsHeaders });
+        const data = await res.json();
+        return Response.json(data, { headers: corsHeaders });
+      } catch(e: any) {
+        return Response.json({ error: e?.message || 'Failed' }, { status: 500, headers: corsHeaders });
+      }
+    }
+
     // ─── API: speed.cloudflare.com/meta ───
     if (url.pathname === '/api/meta') {
       try {
@@ -310,7 +326,7 @@ async function loadMeta(){
 
 // ─── Cloudflare Radar ───
 async function fetchRadar(type){
-  const url=type==='ipv4'?'https://ipv4-check-perf.radar.cloudflare.com/':'https://ipv6-check-perf.radar.cloudflare.com/';
+  const url='/api/radar?ip='+type;
   try{const r=await fetch(url,{headers:{'Accept':'application/json'}});if(!r.ok)return null;return await r.json();}catch{return null;}
 }
 
