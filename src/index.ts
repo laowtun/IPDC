@@ -23,6 +23,15 @@ export default {
       }, { headers: corsHeaders });
     }
 
+    if (url.pathname === '/api/radar') {
+      const ipver = url.searchParams.get('ip') || '4';
+      const radarUrl = ipver === '6' ? 'https://ipv6-check-perf.radar.cloudflare.com/' : 'https://ipv4-check-perf.radar.cloudflare.com/';
+      try {
+        const res = await fetch(radarUrl, { signal: AbortSignal.timeout(8000) });
+        return Response.json(await res.json(), { headers: corsHeaders });
+      } catch (e: any) { return Response.json({ error: e?.message }, { status: 500, headers: corsHeaders }); }
+    }
+
     if (url.pathname === '/api/lookup') {
       const target = url.searchParams.get('target')?.trim();
       if (!target) return Response.json({ error: 'Missing target' }, { status: 400, headers: corsHeaders });
@@ -34,12 +43,23 @@ export default {
         if (isDomain) {
           const [a, aaaa] = await Promise.all([resolveDNS(target, 'A'), resolveDNS(target, 'AAAA')]);
           result.dns = { a, aaaa };
-          const [g4, g6] = await Promise.all([a[0] ? lookupIP(a[0]) : null, aaaa[0] ? lookupIP(aaaa[0]) : null]);
-          if (g4 || g6) {
+          const allIps = [...a, ...aaaa];
+          if (allIps.length === 0) { result.error = 'No DNS records found'; }
+          else {
+            const geos = await Promise.all(allIps.map(ip => lookupIP(ip)));
             result.geolocation = {};
-            if (g4) { result.geolocation.ipv4 = g4; result.resolved_ip = a[0]; }
-            if (g6) { result.geolocation.ipv6 = g6; if (!result.resolved_ip) result.resolved_ip = aaaa[0]; }
-          } else { result.error = 'No DNS records'; }
+            const seen = new Set();
+            for (let i = 0; i < allIps.length; i++) {
+              const ip = allIps[i];
+              const geo = geos[i];
+              if (!geo || seen.has(ip)) continue;
+              seen.add(ip);
+              const ver = ip.includes(':') ? 'ipv6' : 'ipv4';
+              if (!result.geolocation[ver]) result.geolocation[ver] = geo;
+            }
+            if (a[0]) result.resolved_ip = a[0];
+            else if (aaaa[0]) result.resolved_ip = aaaa[0];
+          }
         } else {
           const geo = await lookupIP(target);
           if (geo) { result.geolocation = {}; result.geolocation[result.type] = geo; }
@@ -81,7 +101,7 @@ const HTML = `<!DOCTYPE html>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>">
 <style>
 :root{--bg:#0f0f23;--card:#111827;--border:#1e293b;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--accent2:#8b5cf6;--green:#22c55e;--red:#ef4444;}
-[data-theme="light"]{--bg:#f5f5f7;--card:rgba(255,255,255,0.8);--border:rgba(0,0,0,0.08);--text:#1d1d1f;--muted:#86868b;--accent:#0071e3;--accent2:#5856d6;--green:#34c759;--red:#ff3b30;}
+[data-theme="light"]{--bg:#f5f5f7;--card:rgba(255,255,255,0.85);--border:rgba(0,0,0,0.08);--text:#1d1d1f;--muted:#86868b;--accent:#0071e3;--accent2:#5856d6;--green:#34c759;--red:#ff3b30;}
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;transition:background .3s,color .3s;}
 .wrap{max-width:900px;margin:0 auto;padding:32px 16px;}
@@ -97,7 +117,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:14px;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);transition:all .3s;}
 .card-t{font-size:.78em;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:12px;}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;margin-right:6px;}
-.ip{font-size:1.5em;font-weight:700;font-family:monospace;color:var(--accent);}
+.ip{font-size:1.5em;font-weight:700;font-family:monospace;color:var(--accent);word-break:break-all;}
 .badge{display:inline-block;padding:2px 8px;border-radius:5px;font-size:.5em;font-weight:600;text-transform:uppercase;vertical-align:middle;margin-left:8px;}
 .b4{background:rgba(59,130,246,.15);color:var(--accent);}
 .b6{background:rgba(139,92,246,.15);color:var(--accent2);}
@@ -134,26 +154,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   </div>
   <div id="results"></div>
   <div id="metaBox"></div>
-  <div class="foot">Powered by Cloudflare Workers + Cloudflare Radar + DNS-over-HTTPS + globe.gl</div>
+  <div class="foot">Powered by Workers + DNS-over-HTTPS + globe.gl</div>
 </div>
 <script src="https://unpkg.com/globe.gl@2.35.1/dist/globe.gl.min.js"></script>
 <script>
 var globe=null;
 
 // ─── Theme ───
-(function(){
-  var t=localStorage.getItem('theme')||'dark';
-  document.documentElement.setAttribute('data-theme',t);
-  var b=document.getElementById('themeBtn');
-  if(b)b.textContent=t==='dark'?'🌙':'☀️';
-})();
-function toggleTheme(){
-  var cur=document.documentElement.getAttribute('data-theme');
-  var next=cur==='dark'?'light':'dark';
-  document.documentElement.setAttribute('data-theme',next);
-  localStorage.setItem('theme',next);
-  document.getElementById('themeBtn').textContent=next==='dark'?'🌙':'☀️';
-}
+(function(){var t=localStorage.getItem('theme')||'dark';document.documentElement.setAttribute('data-theme',t);var b=document.getElementById('themeBtn');if(b)b.textContent=t==='dark'?'🌙':'☀️';})();
+function toggleTheme(){var cur=document.documentElement.getAttribute('data-theme');var next=cur==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',next);localStorage.setItem('theme',next);document.getElementById('themeBtn').textContent=next==='dark'?'🌙':'☀️';}
 
 function $(id){return document.getElementById(id);}
 function badge(t){return '<span class="badge '+(t==='ipv4'?'b4':'b6')+'">'+t.toUpperCase()+'</span>';}
@@ -192,87 +201,92 @@ function showGlobe(lat,lng,label,ip){
 
 function showResults(d){
   var el=$('results');
+  if(!el)return;
   if(d.error){el.innerHTML='<div class="card err">'+d.error+'</div>';return;}
-  var g=d.geolocation;var g4=g?g.ipv4:null;var g6=g?g.ipv6:null;
+  var g=d.geolocation||{};var g4=g.ipv4||null;var g6=g.ipv6||null;
   var h='<div class="globe" id="globe"></div>';
   h+='<div class="card"><div class="card-t"><span class="dot"></span>'+d.target+'</div><div style="display:flex;gap:12px;flex-wrap:wrap;">';
-  if(g4)h+='<div class="ip">'+(g4.ip_address||g4.ip)+badge('ipv4')+'</div>';
-  if(g6)h+='<div class="ip" style="color:var(--accent2)">'+(g6.ip_address||g6.ip)+badge('ipv6')+'</div>';
+  if(g4)h+='<div class="ip">'+(g4.ip||g4.ip_address||'')+badge('ipv4')+'</div>';
+  if(g6)h+='<div class="ip" style="color:var(--accent2)">'+(g6.ip||g6.ip_address||'')+badge('ipv6')+'</div>';
+  if(!g4&&!g6)h+='<div style="color:var(--muted);">\\u2014</div>';
   h+='</div></div>';
   if(d.dns){
     h+='<div class="card"><div class="card-t"><span class="dot"></span>DNS 记录</div><div class="dns">';
     if(d.dns.a&&d.dns.a.length)h+='<div><span class="dns-t">A</span>'+d.dns.a.join(', ')+'</div>';
     if(d.dns.aaaa&&d.dns.aaaa.length)h+='<div><span class="dns-t">AAAA</span>'+d.dns.aaaa.join(', ')+'</div>';
+    if((!d.dns.a||!d.dns.a.length)&&(!d.dns.aaaa||!d.dns.aaaa.length))h+='<div style="color:var(--muted);">\\u65e0\\u8bb0\\u5f55</div>';
     h+='</div></div>';
   }
   if(g4||g6){h+='<div class="row">';if(g4)h+=geoCard(g4,'ipv4');if(g6)h+=geoCard(g6,'ipv6');h+='</div>';}
   el.innerHTML=h;
-  setTimeout(function(){initGlobe();var gp=g4||g6;if(gp&&gp.latitude)showGlobe(gp.latitude,gp.longitude,(gp.city||'')+', '+(gp.country||''),gp.ip_address||gp.ip);},200);
+  setTimeout(function(){initGlobe();var gp=g4||g6;if(gp&&gp.latitude)showGlobe(gp.latitude,gp.longitude,(gp.city||'')+', '+(gp.country||''),gp.ip||'');},200);
 }
 
 function geoCard(geo,ver){
   var h='<div class="card"><div class="card-t"><span class="dot"></span>'+ver.toUpperCase()+'</div><div class="grid">';
-  h+=itemM('IP',geo.ip_address||geo.ip);
-  h+=item('国家',geo.country);h+=item('地区',geo.region);h+=item('城市',geo.city);
-  h+=item('数据中心',geo.colo);h+=item('AS','AS'+geo.asn);
-  h+=itemM('纬度',geo.latitude);h+=itemM('经度',geo.longitude);
+  h+=itemM('IP',geo.ip||geo.ip_address);
+  h+=item('Country',geo.country);h+=item('Region',geo.region);h+=item('City',geo.city);
+  h+=item('Colo',geo.colo);h+=item('AS','AS'+geo.asn);
+  h+=itemM('Lat',geo.latitude);h+=itemM('Lon',geo.longitude);
   h+='</div></div>';return h;
 }
 
-function showLoading(m){$('results').innerHTML='<div class="loading"><div class="spinner"></div>'+m+'</div>';}
+function showLoading(m){var el=$('results');if(el)el.innerHTML='<div class="loading"><div class="spinner"></div>'+m+'</div>';}
 
-// ─── 访客双栈信息 ───
+// ─── Visitor: dual-stack via radar endpoints ───
+async function fetchRadar(t){
+  try{var r=await fetch('/api/radar?ip='+t+'&_t='+Date.now());if(!r.ok)return null;return await r.json();}catch(e){return null;}
+}
+
 async function loadVisitor(){
-  showLoading('检测你的 IP 信息...');
+  showLoading('Detecting your IP...');
   try{
-    var r=await fetch('/api/visitor?_t='+Date.now());
-    var vis=await r.json();
-    if(vis.ip&&vis.ip!=='unknown'){
-      $('q').value=vis.ip;
-      var d={target:vis.ip,type:vis.ip.indexOf(':')>=0?'ipv6':'ipv4',geolocation:{}};
-      d.geolocation[d.type]={
-        ip:vis.ip,country:vis.country,region:vis.region,city:vis.city,
-        latitude:vis.latitude,longitude:vis.longitude,asn:vis.asn,org:vis.as_org,colo:vis.colo
-      };
-      showResults(d);
-      showMeta(vis);
-    }else{
-      $('results').innerHTML='<div class="card err">无法获取 IP</div>';
-    }
+    var ipv4=await fetchRadar('ipv4');
+    var ipv6=await fetchRadar('ipv6');
+    var primary=ipv4||ipv6;
+    if(primary)$('q').value=primary.ip_address||'';
+    var d={target:(primary?primary.ip_address:'unknown'),type:'dual',geolocation:{}};
+    if(ipv4)d.geolocation.ipv4=ipv4;
+    if(ipv6)d.geolocation.ipv6=ipv6;
+    showResults(d);
+    showMeta(ipv4,ipv6);
   }catch(e){
     $('results').innerHTML='<div class="card err">'+e.message+'</div>';
   }
 }
 
-function showMeta(vis){
-  var h='<div class="card meta"><div class="card-t"><span class="dot"></span>访客信息 (Cloudflare)</div><div class="grid">';
-  h+=itemM('IP',vis.ip);
-  h+=item('AS','AS'+vis.asn);
-  h+=item('运营商',vis.as_org);
-  h+=item('国家',vis.country);
-  h+=item('城市',vis.city);
-  h+=item('地区',vis.region);
-  h+=item('邮编',vis.postal);
-  h+=item('时区',vis.timezone);
-  h+=itemM('纬度',vis.latitude);
-  h+=itemM('经度',vis.longitude);
-  h+=item('数据中心',vis.colo);
+function showMeta(v4,v6){
+  var h='<div class="card meta"><div class="card-t"><span class="dot"></span>Visitor Info</div><div class="grid">';
+  if(v4){
+    h+=itemM('IPv4',v4.ip_address);
+    h+=item('AS','AS'+v4.asn);h+=item('Org',v4.asOrganization);
+    h+=item('Country',v4.country);h+=item('City',v4.city);
+    h+=item('Colo',v4.colo);
+  }
+  if(v6){
+    h+=itemM('IPv6',v6.ip_address);
+    h+=item('AS','AS'+v6.asn);h+=item('Org',v6.asOrganization);
+    h+=item('Country',v6.country);h+=item('City',v6.city);
+    h+=item('Colo',v6.colo);
+  }
+  if(!v4&&!v6)h+='<div style="color:var(--muted);">\\u65e0\\u6570\\u636e</div>';
   h+='</div></div>';
   $('metaBox').innerHTML=h;
 }
 
+// ─── Lookup ───
 async function doLookup(){
   var input=$('q').value.trim();if(!input)return;
-  $('btn').disabled=true;showLoading('查询 '+input+' ...');
+  $('btn').disabled=true;showLoading('Querying '+input+' ...');
   try{
     var r=await fetch('/api/lookup?target='+encodeURIComponent(input)+'&_t='+Date.now());
     var data=await r.json();
     showResults(data);
-    var vr=await fetch('/api/visitor?_t='+Date.now());
-    var vis=await vr.json();
-    if(vis.ip)showMeta(vis);
+    var ipv4=await fetchRadar('ipv4');
+    var ipv6=await fetchRadar('ipv6');
+    showMeta(ipv4,ipv6);
   }catch(e){
-    $('results').innerHTML='<div class="card err">'+e.message+'</div>';
+    var el=$('results');if(el)el.innerHTML='<div class="card err">'+e.message+'</div>';
   }finally{
     $('btn').disabled=false;
   }
