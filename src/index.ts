@@ -116,10 +116,18 @@ async function resolveDNS(name: string, type: string): Promise<string[]> {
 async function lookupIP(ip: string): Promise<any | null> {
   try {
     const res = await fetch(`${IP_API}/${ip}`, {
-      signal: AbortSignal.timeout(5000),
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(8000),
     });
+    if (!res.ok) {
+      console.log(`[lookupIP] HTTP ${res.status} for ${ip}`);
+      return null;
+    }
     const data: any = await res.json();
-    if (!data.success) return null;
+    if (!data.success) {
+      console.log(`[lookupIP] API failed for ${ip}:`, JSON.stringify(data).slice(0, 200));
+      return null;
+    }
     return {
       ip: data.ip,
       country: data.country,
@@ -139,7 +147,8 @@ async function lookupIP(ip: string): Promise<any | null> {
       is_proxy: false,
       is_hosting: data.connection?.type === 'hosting' || false,
     };
-  } catch {
+  } catch (e: any) {
+    console.log(`[lookupIP] Error for ${ip}:`, e?.message);
     return null;
   }
 }
