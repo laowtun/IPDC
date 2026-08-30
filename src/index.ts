@@ -13,27 +13,16 @@ export default {
     };
     if (request.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
-    // ─── 访客信息 (Cloudflare request.cf) ───
     if (url.pathname === '/api/visitor') {
       const cf = (request as any).cf || {};
       const ip = request.headers.get('cf-connecting-ip') || 'unknown';
       return Response.json({
-        ip,
-        country: cf.country || '',
-        country_code: cf.countryCode || '',
-        city: cf.city || '',
-        region: cf.region || '',
-        postal: cf.postalCode || '',
-        latitude: cf.latitude || '',
-        longitude: cf.longitude || '',
-        timezone: cf.timezone || '',
-        asn: cf.asn || '',
-        as_org: cf.asOrganization || '',
-        colo: cf.colo || '',
+        ip, country: cf.country || '', city: cf.city || '', region: cf.region || '',
+        postal: cf.postalCode || '', latitude: cf.latitude || '', longitude: cf.longitude || '',
+        timezone: cf.timezone || '', asn: cf.asn || '', as_org: cf.asOrganization || '', colo: cf.colo || '',
       }, { headers: corsHeaders });
     }
 
-    // ─── DNS 查询 ───
     if (url.pathname === '/api/lookup') {
       const target = url.searchParams.get('target')?.trim();
       if (!target) return Response.json({ error: 'Missing target' }, { status: 400, headers: corsHeaders });
@@ -42,32 +31,21 @@ export default {
         const isIPv6 = target.includes(':') && !target.includes('.');
         const isDomain = !isIPv4 && !isIPv6;
         const result: any = { target, type: isDomain ? 'domain' : (isIPv6 ? 'ipv6' : 'ipv4') };
-
         if (isDomain) {
           const [a, aaaa] = await Promise.all([resolveDNS(target, 'A'), resolveDNS(target, 'AAAA')]);
           result.dns = { a, aaaa };
-          const [g4, g6] = await Promise.all([
-            a[0] ? lookupIP(a[0]) : null,
-            aaaa[0] ? lookupIP(aaaa[0]) : null,
-          ]);
+          const [g4, g6] = await Promise.all([a[0] ? lookupIP(a[0]) : null, aaaa[0] ? lookupIP(aaaa[0]) : null]);
           if (g4 || g6) {
             result.geolocation = {};
             if (g4) { result.geolocation.ipv4 = g4; result.resolved_ip = a[0]; }
             if (g6) { result.geolocation.ipv6 = g6; if (!result.resolved_ip) result.resolved_ip = aaaa[0]; }
-          } else {
-            result.error = 'No DNS records';
-          }
+          } else { result.error = 'No DNS records'; }
         } else {
           const geo = await lookupIP(target);
-          if (geo) {
-            result.geolocation = {};
-            result.geolocation[result.type] = geo;
-          }
+          if (geo) { result.geolocation = {}; result.geolocation[result.type] = geo; }
         }
         return Response.json(result, { headers: corsHeaders });
-      } catch (e: any) {
-        return Response.json({ error: e?.message }, { status: 500, headers: corsHeaders });
-      }
+      } catch (e: any) { return Response.json({ error: e?.message }, { status: 500, headers: corsHeaders }); }
     }
 
     return new Response(HTML, { headers: { 'Content-Type': 'text/html; charset=utf-8', ...NO_CACHE } });
@@ -76,93 +54,80 @@ export default {
 
 async function resolveDNS(name: string, type: string): Promise<string[]> {
   try {
-    const res = await fetch(`${DOH_URL}?name=${encodeURIComponent(name)}&type=${type}`, {
-      headers: { 'Accept': 'application/dns-json' },
-      signal: AbortSignal.timeout(5000),
-    });
+    const res = await fetch(`${DOH_URL}?name=${encodeURIComponent(name)}&type=${type}`, { headers: { 'Accept': 'application/dns-json' }, signal: AbortSignal.timeout(5000) });
     const data: any = await res.json();
     if (!data.Answer) return [];
-    return data.Answer
-      .filter((r: any) => r.type === (type === 'A' ? 1 : type === 'AAAA' ? 28 : 12))
-      .map((r: any) => r.data);
-  } catch {
-    return [];
-  }
+    return data.Answer.filter((r: any) => r.type === (type === 'A' ? 1 : type === 'AAAA' ? 28 : 12)).map((r: any) => r.data);
+  } catch { return []; }
 }
 
 async function lookupIP(ip: string): Promise<any | null> {
   try {
-    const res = await fetch(`https://ipinfo.io/${ip}/json`, {
-      headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(8000),
-    });
+    const res = await fetch(`https://ipinfo.io/${ip}/json`, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
     const d: any = await res.json();
     if (d.error) return null;
     const [lat, lon] = (d.loc || ',').split(',');
-    return {
-      ip: d.ip,
-      country: d.country,
-      region: d.region,
-      city: d.city,
-      postal: d.postal,
-      latitude: lat || '',
-      longitude: lon || '',
-      timezone: d.timezone || '',
-      org: d.org || '',
-    };
-  } catch {
-    return null;
-  }
+    return { ip: d.ip, country: d.country, region: d.region, city: d.city, postal: d.postal, latitude: lat || '', longitude: lon || '', timezone: d.timezone || '', org: d.org || '' };
+  } catch { return null; }
 }
 
 const HTML = `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>IPDC - IP Lookup</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌐</text></svg>">
 <style>
+:root{--bg:#0f0f23;--card:#111827;--border:#1e293b;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--accent2:#8b5cf6;--green:#22c55e;--red:#ef4444;}
+[data-theme="light"]{--bg:#f5f5f7;--card:rgba(255,255,255,0.8);--border:rgba(0,0,0,0.08);--text:#1d1d1f;--muted:#86868b;--accent:#0071e3;--accent2:#5856d6;--green:#34c759;--red:#ff3b30;}
 *{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f0f23;color:#e2e8f0;min-height:100vh;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;transition:background .3s,color .3s;}
 .wrap{max-width:900px;margin:0 auto;padding:32px 16px;}
-h1{text-align:center;font-size:2em;margin-bottom:8px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
-.sub{text-align:center;color:#94a3b8;margin-bottom:24px;}
+.hdr{text-align:center;margin-bottom:24px;position:relative;}
+.hdr h1{font-size:2em;margin-bottom:6px;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.hdr p{color:var(--muted);font-size:.95em;}
+.theme-btn{position:absolute;top:0;right:0;width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:var(--card);cursor:pointer;font-size:1.1em;display:flex;align-items:center;justify-content:center;transition:all .3s;}
+.theme-btn:hover{transform:scale(1.1);box-shadow:0 2px 8px rgba(0,0,0,.2);}
 .search{display:flex;gap:10px;margin-bottom:24px;}
-.search input{flex:1;padding:12px 16px;border-radius:10px;border:1px solid #1e293b;background:#111827;color:#e2e8f0;font-size:1em;outline:none;}
-.search input:focus{border-color:#3b82f6;}
-.search button{padding:12px 20px;border-radius:10px;border:none;background:linear-gradient(135deg,#3b82f6,#8b5cf6);color:#fff;font-weight:600;cursor:pointer;}
-.card{background:#111827;border:1px solid #1e293b;border-radius:14px;padding:18px;margin-bottom:14px;}
-.card-t{font-size:.78em;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-bottom:12px;}
-.dot{width:7px;height:7px;border-radius:50%;background:#22c55e;display:inline-block;margin-right:6px;}
-.ip{font-size:1.5em;font-weight:700;font-family:monospace;color:#3b82f6;}
+.search input{flex:1;padding:12px 16px;border-radius:10px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:1em;outline:none;transition:all .3s;}
+.search input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,130,246,.15);}
+.search button{padding:12px 20px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-weight:600;cursor:pointer;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:14px;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);transition:all .3s;}
+.card-t{font-size:.78em;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:12px;}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;margin-right:6px;}
+.ip{font-size:1.5em;font-weight:700;font-family:monospace;color:var(--accent);}
 .badge{display:inline-block;padding:2px 8px;border-radius:5px;font-size:.5em;font-weight:600;text-transform:uppercase;vertical-align:middle;margin-left:8px;}
-.b4{background:rgba(59,130,246,.15);color:#3b82f6;}
-.b6{background:rgba(139,92,246,.15);color:#8b5cf6;}
+.b4{background:rgba(59,130,246,.15);color:var(--accent);}
+.b6{background:rgba(139,92,246,.15);color:var(--accent2);}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;}
 .item{padding:8px 12px;background:rgba(255,255,255,.03);border-radius:8px;}
-.item-l{font-size:.7em;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;}
+[data-theme="light"] .item{background:rgba(0,0,0,.03);}
+.item-l{font-size:.7em;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
 .item-v{font-size:.9em;font-weight:500;}
 .mono{font-family:monospace;font-size:.85em;}
 .dns{font-family:monospace;font-size:.85em;line-height:2;}
-.dns-t{color:#8b5cf6;font-weight:600;margin-right:4px;}
+.dns-t{color:var(--accent2);font-weight:600;margin-right:4px;}
 .globe{width:100%;height:350px;border-radius:10px;overflow:hidden;background:#000;margin-bottom:14px;}
-.loading{text-align:center;padding:30px;color:#94a3b8;}
-.spinner{width:24px;height:24px;border:3px solid #1e293b;border-top-color:#3b82f6;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 8px;}
+.loading{text-align:center;padding:30px;color:var(--muted);}
+.spinner{width:24px;height:24px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 8px;}
 @keyframes spin{to{transform:rotate(360deg);}}
-.meta{border-left:3px solid #3b82f6;}
+.meta{border-left:3px solid var(--accent);}
 .row{display:flex;gap:14px;flex-wrap:wrap;}
 .row>.card{flex:1;min-width:260px;}
-.foot{text-align:center;margin-top:28px;color:#64748b;font-size:.8em;border-top:1px solid #1e293b;padding-top:14px;}
-.err{text-align:center;color:#ef4444;}
+.foot{text-align:center;margin-top:28px;color:var(--muted);font-size:.8em;border-top:1px solid var(--border);padding-top:14px;}
+.err{text-align:center;color:var(--red);}
 @media(max-width:600px){.search{flex-direction:column;}.row{flex-direction:column;}}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>IPDC</h1>
-  <p class="sub">IPv4/IPv6 双栈查询 — 地理位置、ISP、DNS 解析</p>
+  <div class="hdr">
+    <button class="theme-btn" onclick="toggleTheme()" id="themeBtn">🌙</button>
+    <h1>IPDC</h1>
+    <p>IPv4/IPv6 双栈查询 — 地理位置、ISP、DNS 解析</p>
+  </div>
   <div class="search">
     <input type="text" id="q" placeholder="输入 IP 或域名，例如 8.8.8.8 / google.com" onkeydown="if(event.key==='Enter')doLookup()">
     <button onclick="doLookup()" id="btn">🔍 查询</button>
@@ -174,11 +139,26 @@ h1{text-align:center;font-size:2em;margin-bottom:8px;background:linear-gradient(
 <script src="https://unpkg.com/globe.gl@2.35.1/dist/globe.gl.min.js"></script>
 <script>
 var globe=null;
-function $(id){return document.getElementById(id);}
 
+// ─── Theme ───
+(function(){
+  var t=localStorage.getItem('theme')||'dark';
+  document.documentElement.setAttribute('data-theme',t);
+  var b=document.getElementById('themeBtn');
+  if(b)b.textContent=t==='dark'?'🌙':'☀️';
+})();
+function toggleTheme(){
+  var cur=document.documentElement.getAttribute('data-theme');
+  var next=cur==='dark'?'light':'dark';
+  document.documentElement.setAttribute('data-theme',next);
+  localStorage.setItem('theme',next);
+  document.getElementById('themeBtn').textContent=next==='dark'?'🌙':'☀️';
+}
+
+function $(id){return document.getElementById(id);}
 function badge(t){return '<span class="badge '+(t==='ipv4'?'b4':'b6')+'">'+t.toUpperCase()+'</span>';}
-function item(l,v){return '<div class="item"><div class="item-l">'+l+'</div><div class="item-v">'+(v||'\u2014')+'</div></div>';}
-function itemM(l,v){return '<div class="item"><div class="item-l">'+l+'</div><div class="item-v mono">'+(v||'\u2014')+'</div></div>';}
+function item(l,v){return '<div class="item"><div class="item-l">'+l+'</div><div class="item-v">'+(v||'\\u2014')+'</div></div>';}
+function itemM(l,v){return '<div class="item"><div class="item-l">'+l+'</div><div class="item-v mono">'+(v||'\\u2014')+'</div></div>';}
 
 function initGlobe(){
   var el=$('globe');if(!el)return;if(globe)el.innerHTML='';
@@ -217,7 +197,7 @@ function showResults(d){
   var h='<div class="globe" id="globe"></div>';
   h+='<div class="card"><div class="card-t"><span class="dot"></span>'+d.target+'</div><div style="display:flex;gap:12px;flex-wrap:wrap;">';
   if(g4)h+='<div class="ip">'+(g4.ip_address||g4.ip)+badge('ipv4')+'</div>';
-  if(g6)h+='<div class="ip" style="color:#8b5cf6">'+(g6.ip_address||g6.ip)+badge('ipv6')+'</div>';
+  if(g6)h+='<div class="ip" style="color:var(--accent2)">'+(g6.ip_address||g6.ip)+badge('ipv6')+'</div>';
   h+='</div></div>';
   if(d.dns){
     h+='<div class="card"><div class="card-t"><span class="dot"></span>DNS 记录</div><div class="dns">';
@@ -241,7 +221,7 @@ function geoCard(geo,ver){
 
 function showLoading(m){$('results').innerHTML='<div class="loading"><div class="spinner"></div>'+m+'</div>';}
 
-// ─── 访客信息 (从 request.cf 获取) ───
+// ─── 访客双栈信息 ───
 async function loadVisitor(){
   showLoading('检测你的 IP 信息...');
   try{
@@ -251,11 +231,10 @@ async function loadVisitor(){
       $('q').value=vis.ip;
       var d={target:vis.ip,type:vis.ip.indexOf(':')>=0?'ipv6':'ipv4',geolocation:{}};
       d.geolocation[d.type]={
-        ip:vis.ip, country:vis.country, region:vis.region, city:vis.city,
-        latitude:vis.latitude, longitude:vis.longitude, asn:vis.asn, org:vis.as_org, colo:vis.colo
+        ip:vis.ip,country:vis.country,region:vis.region,city:vis.city,
+        latitude:vis.latitude,longitude:vis.longitude,asn:vis.asn,org:vis.as_org,colo:vis.colo
       };
       showResults(d);
-      // 显示访客信息
       showMeta(vis);
     }else{
       $('results').innerHTML='<div class="card err">无法获取 IP</div>';
@@ -265,7 +244,6 @@ async function loadVisitor(){
   }
 }
 
-// ─── 显示访客信息 ───
 function showMeta(vis){
   var h='<div class="card meta"><div class="card-t"><span class="dot"></span>访客信息 (Cloudflare)</div><div class="grid">';
   h+=itemM('IP',vis.ip);
@@ -283,7 +261,6 @@ function showMeta(vis){
   $('metaBox').innerHTML=h;
 }
 
-// ─── IP/域名查询 ───
 async function doLookup(){
   var input=$('q').value.trim();if(!input)return;
   $('btn').disabled=true;showLoading('查询 '+input+' ...');
@@ -291,7 +268,6 @@ async function doLookup(){
     var r=await fetch('/api/lookup?target='+encodeURIComponent(input)+'&_t='+Date.now());
     var data=await r.json();
     showResults(data);
-    // 查询后也更新访客信息
     var vr=await fetch('/api/visitor?_t='+Date.now());
     var vis=await vr.json();
     if(vis.ip)showMeta(vis);
