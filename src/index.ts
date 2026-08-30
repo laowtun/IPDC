@@ -1,6 +1,7 @@
 interface Env {}
 
 const DOH_URL = 'https://1.1.1.1/dns-query';
+const NO_CACHE = { 'Cache-Control': 'no-store, no-cache, must-revalidate', 'Pragma': 'no-cache' };
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -8,34 +9,31 @@ export default {
     const corsHeaders: Record<string, string> = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      ...NO_CACHE,
     };
     if (request.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
+    // ─── 访客信息 (Cloudflare request.cf) ───
     if (url.pathname === '/api/visitor') {
       const cf = (request as any).cf || {};
       const ip = request.headers.get('cf-connecting-ip') || 'unknown';
-      return Response.json({ ip, country: cf.country||'', city: cf.city||'', region: cf.region||'', latitude: cf.latitude||'', longitude: cf.longitude||'', asn: cf.asn||'', as_org: cf.asOrganization||'' }, { headers: corsHeaders });
+      return Response.json({
+        ip,
+        country: cf.country || '',
+        country_code: cf.countryCode || '',
+        city: cf.city || '',
+        region: cf.region || '',
+        postal: cf.postalCode || '',
+        latitude: cf.latitude || '',
+        longitude: cf.longitude || '',
+        timezone: cf.timezone || '',
+        asn: cf.asn || '',
+        as_org: cf.asOrganization || '',
+        colo: cf.colo || '',
+      }, { headers: corsHeaders });
     }
 
-    if (url.pathname === '/api/meta') {
-      try {
-        const res = await fetch('https://speed.cloudflare.com/meta', {
-          headers: { 'Referer': 'https://speed.cloudflare.com/', 'Origin': 'https://speed.cloudflare.com' },
-          signal: AbortSignal.timeout(8000),
-        });
-        return Response.json(await res.json(), { headers: corsHeaders });
-      } catch(e: any) { return Response.json({ error: e?.message }, { status: 500, headers: corsHeaders }); }
-    }
-
-    if (url.pathname === '/api/radar') {
-      const ipver = url.searchParams.get('ip') || '4';
-      const radarUrl = ipver === '6' ? 'https://ipv6-check-perf.radar.cloudflare.com/' : 'https://ipv4-check-perf.radar.cloudflare.com/';
-      try {
-        const res = await fetch(radarUrl, { signal: AbortSignal.timeout(8000) });
-        return Response.json(await res.json(), { headers: corsHeaders });
-      } catch(e: any) { return Response.json({ error: e?.message }, { status: 500, headers: corsHeaders }); }
-    }
-
+    // ─── DNS 查询 ───
     if (url.pathname === '/api/lookup') {
       const target = url.searchParams.get('target')?.trim();
       if (!target) return Response.json({ error: 'Missing target' }, { status: 400, headers: corsHeaders });
@@ -43,43 +41,79 @@ export default {
         const isIPv4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(target);
         const isIPv6 = target.includes(':') && !target.includes('.');
         const isDomain = !isIPv4 && !isIPv6;
-        const result: any = { target, type: isDomain?'domain':(isIPv6?'ipv6':'ipv4') };
+        const result: any = { target, type: isDomain ? 'domain' : (isIPv6 ? 'ipv6' : 'ipv4') };
+
         if (isDomain) {
-          const [a, aaaa] = await Promise.all([resolveDNS(target,'A'), resolveDNS(target,'AAAA')]);
+          const [a, aaaa] = await Promise.all([resolveDNS(target, 'A'), resolveDNS(target, 'AAAA')]);
           result.dns = { a, aaaa };
-          const [g4, g6] = await Promise.all([a[0]?lookupIP(a[0]):null, aaaa[0]?lookupIP(aaaa[0]):null]);
-          if (g4||g6) { result.geolocation = {}; if(g4){result.geolocation.ipv4=g4;result.resolved_ip=a[0];} if(g6){result.geolocation.ipv6=g6;if(!result.resolved_ip)result.resolved_ip=aaaa[0];} }
-          else result.error = 'No DNS records';
+          const [g4, g6] = await Promise.all([
+            a[0] ? lookupIP(a[0]) : null,
+            aaaa[0] ? lookupIP(aaaa[0]) : null,
+          ]);
+          if (g4 || g6) {
+            result.geolocation = {};
+            if (g4) { result.geolocation.ipv4 = g4; result.resolved_ip = a[0]; }
+            if (g6) { result.geolocation.ipv6 = g6; if (!result.resolved_ip) result.resolved_ip = aaaa[0]; }
+          } else {
+            result.error = 'No DNS records';
+          }
         } else {
           const geo = await lookupIP(target);
-          if (geo) { result.geolocation = {}; result.geolocation[result.type] = geo; }
+          if (geo) {
+            result.geolocation = {};
+            result.geolocation[result.type] = geo;
+          }
         }
         return Response.json(result, { headers: corsHeaders });
-      } catch(e:any) { return Response.json({ error: e?.message }, { status: 500, headers: corsHeaders }); }
+      } catch (e: any) {
+        return Response.json({ error: e?.message }, { status: 500, headers: corsHeaders });
+      }
     }
 
-    return new Response(HTML, { headers: { 'Content-Type':'text/html; charset=utf-8' } });
+    return new Response(HTML, { headers: { 'Content-Type': 'text/html; charset=utf-8', ...NO_CACHE } });
   },
 };
 
 async function resolveDNS(name: string, type: string): Promise<string[]> {
   try {
-    const res = await fetch(`${DOH_URL}?name=${encodeURIComponent(name)}&type=${type}`, { headers: { 'Accept':'application/dns-json' }, signal: AbortSignal.timeout(5000) });
+    const res = await fetch(`${DOH_URL}?name=${encodeURIComponent(name)}&type=${type}`, {
+      headers: { 'Accept': 'application/dns-json' },
+      signal: AbortSignal.timeout(5000),
+    });
     const data: any = await res.json();
     if (!data.Answer) return [];
-    return data.Answer.filter((r:any)=>r.type===(type==='A'?1:type==='AAAA'?28:12)).map((r:any)=>r.data);
-  } catch { return []; }
+    return data.Answer
+      .filter((r: any) => r.type === (type === 'A' ? 1 : type === 'AAAA' ? 28 : 12))
+      .map((r: any) => r.data);
+  } catch {
+    return [];
+  }
 }
 
-async function lookupIP(ip: string): Promise<any|null> {
+async function lookupIP(ip: string): Promise<any | null> {
   try {
-    const res = await fetch(`https://ipinfo.io/${ip}/json`, { headers: { 'Accept':'application/json' }, signal: AbortSignal.timeout(8000) });
+    const res = await fetch(`https://ipinfo.io/${ip}/json`, {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    });
     if (!res.ok) return null;
     const d: any = await res.json();
     if (d.error) return null;
-    const [lat,lon] = (d.loc||',').split(',');
-    return { ip:d.ip, country:d.country, region:d.region, city:d.city, latitude:lat||'', longitude:lon||'', timezone:d.timezone||'', org:d.org||'' };
-  } catch { return null; }
+    const [lat, lon] = (d.loc || ',').split(',');
+    return {
+      ip: d.ip,
+      country: d.country,
+      region: d.region,
+      city: d.city,
+      postal: d.postal,
+      latitude: lat || '',
+      longitude: lon || '',
+      timezone: d.timezone || '',
+      org: d.org || '',
+    };
+  } catch {
+    return null;
+  }
 }
 
 const HTML = `<!DOCTYPE html>
@@ -141,9 +175,10 @@ h1{text-align:center;font-size:2em;margin-bottom:8px;background:linear-gradient(
 <script>
 var globe=null;
 function $(id){return document.getElementById(id);}
+
 function badge(t){return '<span class="badge '+(t==='ipv4'?'b4':'b6')+'">'+t.toUpperCase()+'</span>';}
-function item(l,v){return '<div class="item"><div class="item-l">'+l+'</div><div class="item-v">'+(v||'—')+'</div></div>';}
-function itemM(l,v){return '<div class="item"><div class="item-l">'+l+'</div><div class="item-v mono">'+(v||'—')+'</div></div>';}
+function item(l,v){return '<div class="item"><div class="item-l">'+l+'</div><div class="item-v">'+(v||'\u2014')+'</div></div>';}
+function itemM(l,v){return '<div class="item"><div class="item-l">'+l+'</div><div class="item-v mono">'+(v||'\u2014')+'</div></div>';}
 
 function initGlobe(){
   var el=$('globe');if(!el)return;if(globe)el.innerHTML='';
@@ -206,49 +241,65 @@ function geoCard(geo,ver){
 
 function showLoading(m){$('results').innerHTML='<div class="loading"><div class="spinner"></div>'+m+'</div>';}
 
-async function fetchRadar(t){
-  try{var r=await fetch('/api/radar?ip='+t);if(!r.ok)return null;return await r.json();}catch(e){return null;}
-}
-
-async function loadMeta(){
-  try{var r=await fetch('/api/meta');if(!r.ok)return;var d=await r.json();if(!d||d.error)return;
-  var h='<div class="card meta"><div class="card-t"><span class="dot"></span>speed.cloudflare.com/meta</div><div class="grid">';
-  h+=itemM('客户端 IP',d.clientIp);h+=item('协议',d.httpProtocol);h+=item('AS','AS'+d.asn);
-  h+=item('运营商',d.asOrganization);h+=item('国家',d.country);h+=item('城市',d.city);
-  h+=item('地区',d.region);h+=item('邮编',d.postalCode);h+=item('时区',d.timezone);
-  h+=itemM('纬度',d.latitude);h+=itemM('经度',d.longitude);h+=item('数据中心',d.colo?d.colo.iata:'');
-  h+='</div></div>';$('metaBox').innerHTML=h;}catch(e){}
-}
-
+// ─── 访客信息 (从 request.cf 获取) ───
 async function loadVisitor(){
   showLoading('检测你的 IP 信息...');
-  loadMeta();
   try{
-    var ipv4=await fetchRadar('ipv4');var ipv6=await fetchRadar('ipv6');
-    var primary=ipv4||ipv6;
-    if(primary)$('q').value=primary.ip_address;
-    if(!ipv4&&!ipv6){
-      var vis=await(await fetch('/api/visitor')).json();
-      if(vis.ip&&vis.ip!=='unknown'){
-        $('q').value=vis.ip;
-        var d={target:vis.ip,type:vis.ip.indexOf(':')>=0?'ipv6':'ipv4',geolocation:{}};
-        d.geolocation[d.type]={ip:vis.ip,country:vis.country,region:vis.region,city:vis.city,latitude:vis.latitude,longitude:vis.longitude,asn:vis.asn,org:vis.as_org,colo:''};
-        showResults(d);
-      }else $('results').innerHTML='<div class="card err">无法获取 IP</div>';
-      return;
+    var r=await fetch('/api/visitor?_t='+Date.now());
+    var vis=await r.json();
+    if(vis.ip&&vis.ip!=='unknown'){
+      $('q').value=vis.ip;
+      var d={target:vis.ip,type:vis.ip.indexOf(':')>=0?'ipv6':'ipv4',geolocation:{}};
+      d.geolocation[d.type]={
+        ip:vis.ip, country:vis.country, region:vis.region, city:vis.city,
+        latitude:vis.latitude, longitude:vis.longitude, asn:vis.asn, org:vis.as_org, colo:vis.colo
+      };
+      showResults(d);
+      // 显示访客信息
+      showMeta(vis);
+    }else{
+      $('results').innerHTML='<div class="card err">无法获取 IP</div>';
     }
-    var d={target:primary.ip_address,type:'dual',geolocation:{}};
-    if(ipv4)d.geolocation.ipv4=ipv4;if(ipv6)d.geolocation.ipv6=ipv6;
-    showResults(d);
-  }catch(e){$('results').innerHTML='<div class="card err">'+e.message+'</div>';}
+  }catch(e){
+    $('results').innerHTML='<div class="card err">'+e.message+'</div>';
+  }
 }
 
+// ─── 显示访客信息 ───
+function showMeta(vis){
+  var h='<div class="card meta"><div class="card-t"><span class="dot"></span>访客信息 (Cloudflare)</div><div class="grid">';
+  h+=itemM('IP',vis.ip);
+  h+=item('AS','AS'+vis.asn);
+  h+=item('运营商',vis.as_org);
+  h+=item('国家',vis.country);
+  h+=item('城市',vis.city);
+  h+=item('地区',vis.region);
+  h+=item('邮编',vis.postal);
+  h+=item('时区',vis.timezone);
+  h+=itemM('纬度',vis.latitude);
+  h+=itemM('经度',vis.longitude);
+  h+=item('数据中心',vis.colo);
+  h+='</div></div>';
+  $('metaBox').innerHTML=h;
+}
+
+// ─── IP/域名查询 ───
 async function doLookup(){
   var input=$('q').value.trim();if(!input)return;
   $('btn').disabled=true;showLoading('查询 '+input+' ...');
-  try{var r=await fetch('/api/lookup?target='+encodeURIComponent(input));showResults(await r.json());}
-  catch(e){$('results').innerHTML='<div class="card err">'+e.message+'</div>';}
-  finally{$('btn').disabled=false;}
+  try{
+    var r=await fetch('/api/lookup?target='+encodeURIComponent(input)+'&_t='+Date.now());
+    var data=await r.json();
+    showResults(data);
+    // 查询后也更新访客信息
+    var vr=await fetch('/api/visitor?_t='+Date.now());
+    var vis=await vr.json();
+    if(vis.ip)showMeta(vis);
+  }catch(e){
+    $('results').innerHTML='<div class="card err">'+e.message+'</div>';
+  }finally{
+    $('btn').disabled=false;
+  }
 }
 
 loadVisitor();
