@@ -1,7 +1,7 @@
 interface Env {}
 
 // IP geolocation API (free, no key, supports IPv4+IPv6, HTTPS)
-const IP_API = 'https://ipwho.is';
+const IP_API = 'https://ipinfo.io';
 
 // DNS-over-HTTPS resolver (Cloudflare 1.1.1.1)
 const DOH_URL = 'https://1.1.1.1/dns-query';
@@ -115,7 +115,7 @@ async function resolveDNS(name: string, type: string): Promise<string[]> {
 
 async function lookupIP(ip: string): Promise<any | null> {
   try {
-    const res = await fetch(`${IP_API}/${ip}`, {
+    const res = await fetch(`${IP_API}/${ip}/json`, {
       headers: { 'Accept': 'application/json' },
       signal: AbortSignal.timeout(8000),
     });
@@ -124,28 +124,29 @@ async function lookupIP(ip: string): Promise<any | null> {
       return null;
     }
     const data: any = await res.json();
-    if (!data.success) {
-      console.log(`[lookupIP] API failed for ${ip}:`, JSON.stringify(data).slice(0, 200));
+    if (data.error) {
+      console.log(`[lookupIP] API error for ${ip}:`, data.reason || data.message);
       return null;
     }
+    const [lat, lon] = (data.loc || ',').split(',');
     return {
       ip: data.ip,
       country: data.country,
-      country_code: data.country_code,
+      country_code: data.country,
       region: data.region,
       city: data.city,
       postal: data.postal,
-      latitude: data.latitude,
-      longitude: data.longitude,
-      timezone: data.timezone?.id || '',
-      isp: data.connection?.isp || '',
-      org: data.connection?.org || '',
-      as_info: 'AS' + (data.connection?.asn || ''),
-      as_name: data.connection?.org || '',
-      reverse_dns: data.connection?.domain || '',
+      latitude: lat || '',
+      longitude: lon || '',
+      timezone: data.timezone || '',
+      isp: data.org || '',
+      org: data.org || '',
+      as_info: data.org || '',
+      as_name: data.org || '',
+      reverse_dns: data.hostname || '',
       is_mobile: false,
       is_proxy: false,
-      is_hosting: data.connection?.type === 'hosting' || false,
+      is_hosting: false,
     };
   } catch (e: any) {
     console.log(`[lookupIP] Error for ${ip}:`, e?.message);
